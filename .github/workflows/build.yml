@@ -1,0 +1,49 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write   # needed to publish releases
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set version from tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          plutil -replace CFBundleShortVersionString -string "${GITHUB_REF_NAME#v}" Info.plist
+          plutil -replace CFBundleVersion -string "${{ github.run_number }}" Info.plist
+
+      - name: Build universal app
+        run: bash ./build.sh
+
+      - name: Verify
+        run: |
+          lipo -info build/PingDot.app/Contents/MacOS/PingDot
+          codesign --verify --verbose build/PingDot.app
+          # Launch smoke test. CI runners may block ICMP, so ping results are informational only.
+          build/PingDot.app/Contents/MacOS/PingDot --check
+
+      - name: Package
+        run: ditto -c -k --keepParent build/PingDot.app PingDot.zip
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PingDot
+          path: PingDot.zip
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: PingDot.zip
+          generate_release_notes: true
